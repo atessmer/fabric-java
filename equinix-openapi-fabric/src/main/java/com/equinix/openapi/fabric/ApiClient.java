@@ -59,6 +59,8 @@ import com.equinix.openapi.fabric.auth.ApiKeyAuth;
  * <p>ApiClient class.</p>
  */
 public class ApiClient {
+    public String HEADER_TRACE_ID = "SDK-TRACE-ID";
+    public String QUERYPARAM_TRACE_ID = "sdk_trace_id";
 
     private String basePath = "https://api.equinix.com";
     protected List<ServerConfiguration> servers = new ArrayList<ServerConfiguration>(Arrays.asList(
@@ -1038,12 +1040,18 @@ public class ApiClient {
      * @throws com.equinix.openapi.fabric.ApiException If fail to execute the call
      */
     public <T> ApiResponse<T> execute(Call call, Type returnType) throws ApiException {
+        Request request = call.request();
+        UUID traceId = null;
+        try {
+            traceId = UUID.fromString(request.headers().get(HEADER_TRACE_ID));
+        } catch (IllegalArgumentException e) {}
+
         try {
             Response response = call.execute();
-            T data = handleResponse(response, returnType);
+            T data = handleResponse(response, returnType, traceId);
             return new ApiResponse<T>(response.code(), response.headers().toMultimap(), data);
         } catch (IOException e) {
-            throw new ApiException(e);
+            throw new ApiException(e, traceId);
         }
     }
 
@@ -1092,6 +1100,10 @@ public class ApiClient {
         });
     }
 
+    public <T> T handleResponse(Response response, Type returnType) throws ApiException {
+       return handleResponse(response, returnType, null);
+    }
+
     /**
      * Handle the given response, return the deserialized object when the response is successful.
      *
@@ -1102,7 +1114,7 @@ public class ApiClient {
      * @throws com.equinix.openapi.fabric.ApiException If the response has an unsuccessful status code or
      *                      fail to deserialize the response body
      */
-    public <T> T handleResponse(Response response, Type returnType) throws ApiException {
+    public <T> T handleResponse(Response response, Type returnType, UUID traceId) throws ApiException {
         if (response.isSuccessful()) {
             if (returnType == null || response.code() == 204) {
                 // returning null if the returnType is not defined,
@@ -1111,7 +1123,7 @@ public class ApiClient {
                     try {
                         response.body().close();
                     } catch (Exception e) {
-                        throw new ApiException(response.message(), e, response.code(), response.headers().toMultimap());
+                        throw new ApiException(response.message(), e, response.code(), response.headers().toMultimap(), traceId);
                     }
                 }
                 return null;
@@ -1124,10 +1136,10 @@ public class ApiClient {
                 try {
                     respBody = response.body().string();
                 } catch (IOException e) {
-                    throw new ApiException(response.message(), e, response.code(), response.headers().toMultimap());
+                    throw new ApiException(response.message(), e, response.code(), response.headers().toMultimap(), traceId);
                 }
             }
-            throw new ApiException(response.message(), response.code(), response.headers().toMultimap(), respBody);
+            throw new ApiException(response.message(), response.code(), response.headers().toMultimap(), respBody, traceId);
         }
     }
 
@@ -1172,6 +1184,11 @@ public class ApiClient {
      * @throws com.equinix.openapi.fabric.ApiException If fail to serialize the request body object
      */
     public Request buildRequest(String baseUrl, String path, String method, List<Pair> queryParams, List<Pair> collectionQueryParams, Object body, Map<String, String> headerParams, Map<String, String> cookieParams, Map<String, Object> formParams, String[] authNames, ApiCallback callback) throws ApiException {
+        // Generate a unique ID for API call tracing
+        UUID traceId = UUID.randomUUID();
+        queryParams.add(new Pair(QUERYPARAM_TRACE_ID, traceId.toString()));
+        headerParams.put(HEADER_TRACE_ID, traceId.toString());
+
         // aggregate queryParams (non-collection) and collectionQueryParams into allQueryParams
         List<Pair> allQueryParams = new ArrayList<Pair>(queryParams);
         allQueryParams.addAll(collectionQueryParams);
